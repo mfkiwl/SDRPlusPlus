@@ -15,6 +15,7 @@
 #include <raw_demod.h>
 #include <cw_demod.h>
 #include <options.h>
+#include <radio_interface.h>
 
 #define CONCAT(a, b)    ((std::string(a) + b).c_str())
 
@@ -33,7 +34,7 @@ public:
     RadioModule(std::string name) {
         this->name = name;
 
-        vfo = sigpath::vfoManager.createVFO(name, ImGui::WaterfallVFO::REF_CENTER, 0, 200000, 200000, 1);
+        vfo = sigpath::vfoManager.createVFO(name, ImGui::WaterfallVFO::REF_CENTER, 0, 200000, 200000, 50000, 200000, false);
 
         ns.init(vfo->output);
 
@@ -63,6 +64,8 @@ public:
         stream.start();
 
         gui::menu.registerEntry(name, menuHandler, this, this);
+
+        core::modComManager.registerInterface("radio", name, moduleInterfaceHandler, this);
     }
 
     ~RadioModule() {
@@ -70,9 +73,18 @@ public:
     }
 
     void enable() {
-        vfo = sigpath::vfoManager.createVFO(name, ImGui::WaterfallVFO::REF_CENTER, 0, 200000, 200000, 1);
-        //ns.stop();
-        currentDemod->setVFO(vfo);
+        double bw = gui::waterfall.getBandwidth();
+        vfo = sigpath::vfoManager.createVFO(name, ImGui::WaterfallVFO::REF_CENTER, std::clamp<double>(savedOffset, -bw/2.0, bw/2.0), 200000, 200000, 50000, 200000, false);
+
+        wfmDemod.setVFO(vfo);
+        fmDemod.setVFO(vfo);
+        amDemod.setVFO(vfo);
+        usbDemod.setVFO(vfo);
+        lsbDemod.setVFO(vfo);
+        dsbDemod.setVFO(vfo);
+        rawDemod.setVFO(vfo);
+        cwDemod.setVFO(vfo);
+
         currentDemod->select();
         currentDemod->start();
         enabled = true;
@@ -80,9 +92,8 @@ public:
 
     void disable() {
         currentDemod->stop();
+        savedOffset = vfo->getOffset();
         sigpath::vfoManager.deleteVFO(vfo);
-        //ns.setInput(vfo->output);
-        //ns.start();
         enabled = false;
     }
 
@@ -147,6 +158,13 @@ private:
         }
     }
 
+    static void moduleInterfaceHandler(int code, void* in, void* out, void* ctx) {
+        RadioModule* _this = (RadioModule*)ctx;
+        if (code == RADIO_IFACE_CMD_GET_MODE) {
+            *(int*)out = _this->demodId;
+        }
+    }
+
     void selectDemod(Demodulator* demod) {
         if (currentDemod != NULL) { currentDemod->stop(); }
         currentDemod = demod;
@@ -176,6 +194,7 @@ private:
     bool enabled = true;
     int demodId = 0;
     float audioSampRate = 48000;
+    double savedOffset = 0;
     Demodulator* currentDemod = NULL;
 
     VFOManager::VFO* vfo;
@@ -191,7 +210,7 @@ private:
 
     dsp::NullSink<dsp::complex_t> ns;
 
-    Event<float>::EventHandler srChangeHandler;
+    EventHandler<float> srChangeHandler;
     SinkManager::Stream stream;
 
 };

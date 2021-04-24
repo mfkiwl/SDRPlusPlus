@@ -3,9 +3,11 @@ project(audio_sink)
 
 if (MSVC)
     set(CMAKE_CXX_FLAGS "-O2 /std:c++17 /EHsc")
-else()
-    set(CMAKE_CXX_FLAGS "-O3 -std=c++17 -fpermissive")
-endif (MSVC)
+elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(CMAKE_CXX_FLAGS "-O3 -std=c++17 -Wno-unused-command-line-argument -undefined dynamic_lookup")
+else ()
+    set(CMAKE_CXX_FLAGS "-O3 -std=c++17")
+endif ()
 
 file(GLOB SRC "src/*.cpp")
 
@@ -16,17 +18,25 @@ target_link_libraries(audio_sink PRIVATE sdrpp_core)
 set_target_properties(audio_sink PROPERTIES PREFIX "")
 
 if (MSVC)
-    find_package(portaudio CONFIG REQUIRED)
-    target_link_libraries(sdrpp_core PUBLIC portaudio)
+    # Lib path
+    target_link_directories(sdrpp_core PUBLIC "C:/Program Files (x86)/RtAudio/lib")
+
+    # Misc headers
+    target_include_directories(sdrpp_core PUBLIC "C:/Program Files (x86)/RtAudio/include/rtaudio")
+
+    target_link_libraries(sdrpp_core PUBLIC rtaudio)
 else (MSVC)
     find_package(PkgConfig)
 
-    pkg_check_modules(PORTAUDIO REQUIRED portaudio-2.0)
+    pkg_check_modules(RTAUDIO REQUIRED rtaudio)
 
-    target_include_directories(sdrpp_core PUBLIC ${PORTAUDIO_INCLUDE_DIRS})
+    target_include_directories(sdrpp_core PUBLIC ${RTAUDIO_INCLUDE_DIRS})
 
-    target_link_directories(sdrpp_core PUBLIC ${PORTAUDIO_LIBRARY_DIRS})
+    target_link_directories(sdrpp_core PUBLIC ${RTAUDIO_LIBRARY_DIRS})
 
-    target_link_libraries(sdrpp_core PUBLIC ${PORTAUDIO_LIBRARIES})
+    target_link_libraries(sdrpp_core PUBLIC ${RTAUDIO_LIBRARIES})
 
-endif (MSVC)
+endif ()
+
+# Install directives
+install(TARGETS audio_sink DESTINATION lib/sdrpp/plugins)

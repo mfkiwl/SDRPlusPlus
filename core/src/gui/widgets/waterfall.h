@@ -38,12 +38,29 @@ namespace ImGui {
         ImVec2 rectMax;
         ImVec2 lineMin;
         ImVec2 lineMax;
+        ImVec2 wfRectMin;
+        ImVec2 wfRectMax;
+        ImVec2 wfLineMin;
+        ImVec2 wfLineMax;
+        ImVec2 lbwSelMin;
+        ImVec2 lbwSelMax;
+        ImVec2 rbwSelMin;
+        ImVec2 rbwSelMax;
+        ImVec2 wfLbwSelMin;
+        ImVec2 wfLbwSelMax;
+        ImVec2 wfRbwSelMin;
+        ImVec2 wfRbwSelMax;
 
         bool centerOffsetChanged = false;
         bool lowerOffsetChanged = false;
         bool upperOffsetChanged = false;
         bool redrawRequired = true;
         bool lineVisible = true;
+        bool bandwidthChanged = false;
+
+        double minBandwidth;
+        double maxBandwidth;
+        bool bandwidthLocked;
     };
 
     class WaterFall {
@@ -101,10 +118,20 @@ namespace ImGui {
 
         void setRawFFTSize(int size, bool lock = true);
 
+        void setFastFFT(bool fastFFT);
+
+        void setFullWaterfallUpdate(bool fullUpdate);
+
+        void setBandPlanPos(int pos);
+
         bool centerFreqMoved = false;
         bool vfoFreqChanged = false;
         bool bandplanEnabled = false;
         bandplan::BandPlan_t* bandplan = NULL;
+
+        bool mouseInFreq = false;
+        bool mouseInFFT = false;
+        bool mouseInWaterfall = false;
 
         std::map<std::string, WaterfallVFO*> vfos;
         std::string selectedVFO = "";
@@ -115,6 +142,12 @@ namespace ImGui {
             REF_CENTER,
             REF_UPPER,
             _REF_COUNT
+        };
+
+        enum {
+            BANDPLAN_POS_BOTTOM,
+            BANDPLAN_POS_TOP,
+            _BANDPLAN_POS_COUNT
         };
 
 
@@ -145,8 +178,8 @@ namespace ImGui {
         ImVec2 fftAreaMax;
         ImVec2 freqAreaMin;
         ImVec2 freqAreaMax;
-        ImVec2 waterfallAreaMin;
-        ImVec2 waterfallAreaMax;
+        ImVec2 wfMin;
+        ImVec2 wfMax;
 
         ImGuiWindow* window;
 
@@ -199,5 +232,17 @@ namespace ImGui {
 
         bool waterfallVisible = true;
         bool bandplanVisible = false;
+
+        bool _fastFFT = true;
+        bool _fullUpdate = true;
+
+        int bandPlanPos = BANDPLAN_POS_BOTTOM;
+
+        // UI Select elements
+        bool freqScaleSelect = false;
+        bool vfoSelect = false;
+        bool vfoBorderSelect = false;
+        WaterfallVFO* relatedVfo = NULL;
+        ImVec2 mouseDownPos;
     };
 };

@@ -8,6 +8,7 @@
 #include <config.h>
 #include <imgui.h>
 
+
 class WFMDemodulator : public Demodulator {
 public:
     WFMDemodulator() {}
@@ -46,7 +47,7 @@ public:
         
         squelch.init(_vfo->output, squelchLevel);
         
-        demod.init(&squelch.out, bbSampRate, bandWidth / 2.0f);
+        demod.init(&squelch.out, bbSampRate, bw / 2.0f);
 
         float audioBW = std::min<float>(audioSampleRate / 2.0f, 16000.0f);
         win.init(audioBW, audioBW, bbSampRate);
@@ -56,7 +57,8 @@ public:
 
         deemp.init(&resamp.out, audioSampRate, tau);
 
-        m2s.init(&deemp.out);
+        if (deempId == 2) { deemp.bypass = true; }
+
     }
 
     void start() {
@@ -64,7 +66,6 @@ public:
         demod.start();
         resamp.start();
         deemp.start();
-        m2s.start();
         running = true;
     }
 
@@ -73,7 +74,6 @@ public:
         demod.stop();
         resamp.stop();
         deemp.stop();
-        m2s.stop();
         running = false;
     }
     
@@ -85,6 +85,7 @@ public:
         _vfo->setSampleRate(bbSampRate, bw);
         _vfo->setSnapInterval(snapInterval);
         _vfo->setReference(ImGui::WaterfallVFO::REF_CENTER);
+        _vfo->setBandwidthLimits(bwMin, bwMax, false);
     }
 
     void setVFO(VFOManager::VFO* vfo) {
@@ -120,25 +121,35 @@ public:
     }
 
     dsp::stream<dsp::stereo_t>* getOutput() {
-        return &m2s.out;
+        return &deemp.out;
     }
     
     void showMenu() {
         float menuWidth = ImGui::GetContentRegionAvailWidth();
 
         ImGui::SetNextItemWidth(menuWidth);
-        if (ImGui::InputFloat(("##_radio_wfm_bw_" + uiPrefix).c_str(), &bw, 1, 100, 0)) {
+        if (ImGui::InputFloat(("##_radio_wfm_bw_" + uiPrefix).c_str(), &bw, 1, 100, "%.0f", 0)) {
             bw = std::clamp<float>(bw, bwMin, bwMax);
             setBandwidth(bw);
             _config->aquire();
             _config->conf[uiPrefix]["WFM"]["bandwidth"] = bw;
             _config->release(true);
         }
+        if (running) {
+            if (_vfo->getBandwidthChanged()) {
+                bw = _vfo->getBandwidth();
+                setBandwidth(bw, false);
+                _config->aquire();
+                _config->conf[uiPrefix]["WFM"]["bandwidth"] = bw;
+                _config->release(true);
+            }
+        }
 
         ImGui::Text("Snap Interval");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-        if (ImGui::InputFloat(("##_radio_wfm_snap_" + uiPrefix).c_str(), &snapInterval, 1, 100, 0)) {
+        if (ImGui::InputFloat(("##_radio_wfm_snap_" + uiPrefix).c_str(), &snapInterval, 1, 100, "%.0f", 0)) {
+            if (snapInterval < 1) { snapInterval = 1; }
             setSnapInterval(snapInterval);
             _config->aquire();
             _config->conf[uiPrefix]["WFM"]["snapInterval"] = snapInterval;
@@ -159,7 +170,7 @@ public:
         ImGui::Text("Squelch");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-        if (ImGui::SliderFloat(("##_radio_wfm_deemp_" + uiPrefix).c_str(), &squelchLevel, -100.0f, 0.0f, "%.3fdB")) {
+        if (ImGui::SliderFloat(("##_radio_wfm_sqelch_" + uiPrefix).c_str(), &squelchLevel, -100.0f, 0.0f, "%.3fdB")) {
             squelch.setLevel(squelchLevel);
             _config->aquire();
             _config->conf[uiPrefix]["WFM"]["squelchLevel"] = squelchLevel;
@@ -168,9 +179,9 @@ public:
     } 
 
 private:
-    void setBandwidth(float bandWidth) {
+    void setBandwidth(float bandWidth, bool updateWaterfall = true) {
         bw = bandWidth;
-        _vfo->setBandwidth(bw);
+        _vfo->setBandwidth(bw, updateWaterfall);
         demod.setDeviation(bw / 2.0f);
     }
 
@@ -188,10 +199,10 @@ private:
         _vfo->setSnapInterval(snapInterval);
     }
 
-    const float bwMax = 200000;
-    const float bwMin = 100000;
-    const float bbSampRate = 200000;
-    const char* deempModes = "50µS\00075µS\000none\000";
+    const float bwMax = 250000;
+    const float bwMin = 50000;
+    const float bbSampRate = 250000;
+    const char* deempModes = "50µs\00075µs\000none\000";
     const float deempVals[2] = { 50e-6, 75e-6 };
 
     std::string uiPrefix;
@@ -207,9 +218,8 @@ private:
     dsp::Squelch squelch;
     dsp::FMDemod demod;
     dsp::filter_window::BlackmanWindow win;
-    dsp::PolyphaseResampler<float> resamp;
+    dsp::PolyphaseResampler<dsp::stereo_t> resamp;
     dsp::BFMDeemp deemp;
-    dsp::MonoToStereo m2s;
 
     ConfigManager* _config;
 

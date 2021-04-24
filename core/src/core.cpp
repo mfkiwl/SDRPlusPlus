@@ -14,6 +14,7 @@
 #include <stb_image.h>
 #include <config.h>
 #include <core.h>
+#include <glfw_window.h>
 #include <options.h>
 #include <duktape/duktape.h>
 #include <duktape/duk_console.h>
@@ -28,13 +29,24 @@
 #include <Windows.h>
 #endif
 
+#ifndef INSTALL_PREFIX
+    #ifdef __APPLE__
+        #define INSTALL_PREFIX "/usr/local"
+    #else 
+        #define INSTALL_PREFIX "/usr"
+    #endif
+#endif
+
 namespace core {
     ConfigManager configManager;
     ScriptManager scriptManager;
     ModuleManager moduleManager;
+    ModuleComManager modComManager;
+    GLFWwindow* window;
 
     void setInputSampleRate(double samplerate) {
         // NOTE: Zoom controls won't work
+        spdlog::info("New DSP samplerate: {0}", samplerate);
         gui::waterfall.setBandwidth(samplerate);
         gui::waterfall.setViewOffset(0);
         gui::waterfall.setViewBandwidth(samplerate);
@@ -66,17 +78,15 @@ duk_ret_t test_func(duk_context *ctx) {
 
 // main
 int sdrpp_main(int argc, char *argv[]) {
-#ifdef _WIN32
-    //FreeConsole();
-    // ConfigManager::setResourceDir("./res");
-    // ConfigManager::setConfigDir(".");
-#endif
-
     spdlog::info("SDR++ v" VERSION_STR);
 
     // Load default options and parse command line
     options::loadDefaults();
     if (!options::parse(argc, argv)) { return -1; }
+
+#ifdef _WIN32
+    if (!options::opts.showConsole) { FreeConsole(); }
+#endif
 
     // Check root directory
     if (!std::filesystem::exists(options::opts.root)) {
@@ -101,55 +111,75 @@ int sdrpp_main(int argc, char *argv[]) {
     defConfig["bandColors"]["military"] = "#FFFF00FF";
     defConfig["bandPlan"] = "General";
     defConfig["bandPlanEnabled"] = true;
+    defConfig["bandPlanPos"] = 0;
     defConfig["centerTuning"] = false;
     defConfig["colorMap"] = "Classic";
+    defConfig["fastFFT"] = false;
     defConfig["fftHeight"] = 300;
+    defConfig["fftSize"] = 65536;
     defConfig["frequency"] = 100000000.0;
+    defConfig["fullWaterfallUpdate"] = false;
     defConfig["max"] = 0.0;
     defConfig["maximized"] = false;
-    defConfig["menuOrder"] = {
-        "Source",
-        "Radio",
-        "Recorder",
-        "Sinks",
-        "Audio",
-        "Scripting",
-        "Band Plan",
-        "Display"
-    };
-    defConfig["menuWidth"] = 300;
-    defConfig["min"] = -70.0;
 
+    // Menu
+    defConfig["menuElements"] = json::array();
+
+    defConfig["menuElements"][0]["name"] = "Source";
+    defConfig["menuElements"][0]["open"] = true;
+
+    defConfig["menuElements"][1]["name"] = "Radio";
+    defConfig["menuElements"][1]["open"] = true;
+
+    defConfig["menuElements"][2]["name"] = "Recorder";
+    defConfig["menuElements"][2]["open"] = true;
+
+    defConfig["menuElements"][3]["name"] = "Sinks";
+    defConfig["menuElements"][3]["open"] = true;
+
+    defConfig["menuElements"][4]["name"] = "Scripting";
+    defConfig["menuElements"][4]["open"] = false;
+
+    defConfig["menuElements"][5]["name"] = "Band Plan";
+    defConfig["menuElements"][5]["open"] = true;
+
+    defConfig["menuElements"][6]["name"] = "Display";
+    defConfig["menuElements"][6]["open"] = true;
+
+    defConfig["menuWidth"] = 300;
+    defConfig["min"] = -120.0;
+
+    // Module instances
     defConfig["moduleInstances"]["Radio"] = "radio";
     defConfig["moduleInstances"]["Recorder"] = "recorder";
     defConfig["moduleInstances"]["SoapySDR Source"] = "soapy_source";
     defConfig["moduleInstances"]["PlutoSDR Source"] = "plutosdr_source";
+    defConfig["moduleInstances"]["HackRF Source"] = "hackrf_source";
     defConfig["moduleInstances"]["RTL-TCP Source"] = "rtl_tcp_source";
+    defConfig["moduleInstances"]["RTL-SDR Source"] = "rtl_sdr_source";
     defConfig["moduleInstances"]["AirspyHF+ Source"] = "airspyhf_source";
     defConfig["moduleInstances"]["Airspy Source"] = "airspy_source";
-    defConfig["moduleInstances"]["HackRF Source"] = "hackrf_source";
+    defConfig["moduleInstances"]["File Source"] = "file_source";
+    defConfig["moduleInstances"]["SDRplay Source"] = "sdrplay_source";
     defConfig["moduleInstances"]["Audio Sink"] = "audio_sink";
 
     defConfig["modules"] = json::array();
     defConfig["offset"] = 0.0;
+    defConfig["showMenu"] = true;
     defConfig["showWaterfall"] = true;
     defConfig["source"] = "";
     defConfig["streams"] = json::object();
     defConfig["windowSize"]["h"] = 720;
     defConfig["windowSize"]["w"] = 1280;
-    
-    defConfig["bandColors"]["broadcast"] = "#0000FFFF";
-    defConfig["bandColors"]["amateur"] = "#FF0000FF";
-    defConfig["bandColors"]["aviation"] = "#00FF00FF";
-    defConfig["bandColors"]["marine"] = "#00FFFFFF";
-    defConfig["bandColors"]["military"] = "#FFFF00FF";
+
+    defConfig["vfoOffsets"] = json::object();
 
 #ifdef _WIN32
     defConfig["modulesDirectory"] = "./modules";
     defConfig["resourcesDirectory"] = "./res";
 #else
-    defConfig["modulesDirectory"] = "/usr/lib/sdrpp/plugins";
-    defConfig["resourcesDirectory"] = "/usr/share/sdrpp";
+    defConfig["modulesDirectory"] = INSTALL_PREFIX "/lib/sdrpp/plugins";
+    defConfig["resourcesDirectory"] = INSTALL_PREFIX "/share/sdrpp";
 #endif
 
     // Load config
@@ -158,14 +188,25 @@ int sdrpp_main(int argc, char *argv[]) {
     core::configManager.load(defConfig);
     core::configManager.enableAutoSave();
 
-    // Fix config
+    
     core::configManager.aquire();
+    // Fix missing elements in config
     for (auto const& item : defConfig.items()) {
         if (!core::configManager.conf.contains(item.key())) {
             spdlog::warn("Missing key in config {0}, repairing", item.key());
             core::configManager.conf[item.key()] = defConfig[item.key()];
         }
     }
+
+    // Remove unused elements
+    auto items = core::configManager.conf.items();
+    for (auto const& item : items) {
+        if (!defConfig.contains(item.key())) {
+            spdlog::warn("Unused key in config {0}, repairing", item.key());
+            core::configManager.conf.erase(item.key());
+        }
+    }
+
     core::configManager.release(true);
 
     // Setup window
@@ -196,22 +237,32 @@ int sdrpp_main(int argc, char *argv[]) {
     json bandColors = core::configManager.conf["bandColors"];
     core::configManager.release();
 
+    if (!std::filesystem::is_directory(resDir)) {
+        spdlog::error("Resource directory doesn't exist! Please make sure that you've configured it correctly in config.json (check readme for details)");
+        return 1;
+    }
+
     // Create window with graphics context
     GLFWmonitor* monitor = glfwGetPrimaryMonitor();
-    GLFWwindow* window = glfwCreateWindow(winWidth, winHeight, "SDR++ v" VERSION_STR " (Built at " __TIME__ ", " __DATE__ ")", NULL, NULL);
-    if (window == NULL)
+    core::window = glfwCreateWindow(winWidth, winHeight, "SDR++ v" VERSION_STR " (Built at " __TIME__ ", " __DATE__ ")", NULL, NULL);
+    if (core::window == NULL)
         return 1;
-    glfwMakeContextCurrent(window);
+    glfwMakeContextCurrent(core::window);
 
 #if (GLFW_VERSION_MAJOR == 3) && (GLFW_VERSION_MINOR >= 3)
     if (maximized) {
-        glfwMaximizeWindow(window);
+        glfwMaximizeWindow(core::window);
     }
 
-    glfwSetWindowMaximizeCallback(window, maximized_callback);
+    glfwSetWindowMaximizeCallback(core::window, maximized_callback);
 #endif
 
     // Load app icon
+    if (!std::filesystem::is_regular_file(resDir + "/icons/sdrpp.png")) {
+        spdlog::error("Icon file '{0}' doesn't exist!", resDir + "/icons/sdrpp.png");
+        return 1;
+    }
+
     GLFWimage icons[10];
     icons[0].pixels = stbi_load(((std::string)(resDir + "/icons/sdrpp.png")).c_str(), &icons[0].width, &icons[0].height, 0, 4);
     icons[1].pixels = (unsigned char*)malloc(16 * 16 * 4); icons[1].width = icons[1].height = 16;
@@ -232,7 +283,7 @@ int sdrpp_main(int argc, char *argv[]) {
     stbir_resize_uint8(icons[0].pixels, icons[0].width, icons[0].height, icons[0].width * 4, icons[7].pixels, 128, 128, 128 * 4, 4);
     stbir_resize_uint8(icons[0].pixels, icons[0].width, icons[0].height, icons[0].width * 4, icons[8].pixels, 196, 196, 196 * 4, 4);
     stbir_resize_uint8(icons[0].pixels, icons[0].width, icons[0].height, icons[0].width * 4, icons[9].pixels, 256, 256, 256 * 4, 4);
-    glfwSetWindowIcon(window, 10, icons);
+    glfwSetWindowIcon(core::window, 10, icons);
     stbi_image_free(icons[0].pixels);
     for (int i = 1; i < 10; i++) {
         free(icons[i].pixels);
@@ -251,12 +302,20 @@ int sdrpp_main(int argc, char *argv[]) {
     io.IniFilename = NULL;
 
     // Setup Platform/Renderer bindings
-    ImGui_ImplGlfw_InitForOpenGL(window, true);
-    ImGui_ImplOpenGL3_Init(glsl_version);
+    ImGui_ImplGlfw_InitForOpenGL(core::window, true);
+
+    if (!ImGui_ImplOpenGL3_Init(glsl_version)) {
+        // If init fail, try to fall back on GLSL 1.2
+        spdlog::warn("Could not init using OpenGL with normal GLSL version, falling back to GLSL 1.2");
+        if (!ImGui_ImplOpenGL3_Init("#version 120")) {
+            spdlog::error("Failed to initialize OpenGL with GLSL 1.2");
+            return -1;
+        }
+    }
 
     if (!style::setDarkStyle(resDir)) { return -1; }
 
-    LoadingScreen::setWindow(window);
+    LoadingScreen::setWindow(core::window);
 
     LoadingScreen::show("Loading icons");
     spdlog::info("Loading icons");
@@ -278,7 +337,7 @@ int sdrpp_main(int argc, char *argv[]) {
     int fsWidth, fsHeight, fsPosX, fsPosY;
 
     // Main loop
-    while (!glfwWindowShouldClose(window)) {
+    while (!glfwWindowShouldClose(core::window)) {
         glfwPollEvents();
 
         // Start the Dear ImGui frame
@@ -293,13 +352,13 @@ int sdrpp_main(int argc, char *argv[]) {
             core::configManager.aquire();
             core::configManager.conf["maximized"]= _maximized;
             if (!maximized) {
-                glfwSetWindowSize(window, core::configManager.conf["windowSize"]["w"], core::configManager.conf["windowSize"]["h"]);
+                glfwSetWindowSize(core::window, core::configManager.conf["windowSize"]["w"], core::configManager.conf["windowSize"]["h"]);
             }
             core::configManager.release(true);
         }
 
         int _winWidth, _winHeight;
-        glfwGetWindowSize(window, &_winWidth, &_winHeight);
+        glfwGetWindowSize(core::window, &_winWidth, &_winHeight);
 
         if (ImGui::IsKeyPressed(GLFW_KEY_F11)) {
             fullScreen = !fullScreen;
@@ -307,13 +366,13 @@ int sdrpp_main(int argc, char *argv[]) {
                 spdlog::info("Fullscreen: ON");
                 fsWidth = _winWidth;
                 fsHeight = _winHeight;
-                glfwGetWindowPos(window, &fsPosX, &fsPosY);
+                glfwGetWindowPos(core::window, &fsPosX, &fsPosY);
                 const GLFWvidmode * mode = glfwGetVideoMode(glfwGetPrimaryMonitor());
-                glfwSetWindowMonitor(window, monitor, 0, 0, mode->width, mode->height, 0);
+                glfwSetWindowMonitor(core::window, monitor, 0, 0, mode->width, mode->height, 0);
             }
             else {
                 spdlog::info("Fullscreen: OFF");
-                glfwSetWindowMonitor(window, nullptr,  fsPosX, fsPosY, fsWidth, fsHeight, 0);
+                glfwSetWindowMonitor(core::window, nullptr,  fsPosX, fsPosY, fsWidth, fsHeight, 0);
             }
         }
 
@@ -335,7 +394,7 @@ int sdrpp_main(int argc, char *argv[]) {
         // Rendering
         ImGui::Render();
         int display_w, display_h;
-        glfwGetFramebufferSize(window, &display_w, &display_h);
+        glfwGetFramebufferSize(core::window, &display_w, &display_h);
         glViewport(0, 0, display_w, display_h);
         glClearColor(0.0666f, 0.0666f, 0.0666f, 1.0f);
         //glClearColor(0.9f, 0.9f, 0.9f, 1.0f);
@@ -343,7 +402,7 @@ int sdrpp_main(int argc, char *argv[]) {
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
         glfwSwapInterval(1); // Enable vsync
-        glfwSwapBuffers(window);
+        glfwSwapBuffers(core::window);
     }
 
     // Cleanup
@@ -351,7 +410,7 @@ int sdrpp_main(int argc, char *argv[]) {
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
 
-    glfwDestroyWindow(window);
+    glfwDestroyWindow(core::window);
     glfwTerminate();
 
     return 0;

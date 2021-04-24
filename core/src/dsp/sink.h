@@ -1,6 +1,7 @@
 #pragma once
 #include <dsp/block.h>
 #include <dsp/buffer.h>
+#include <fstream>
 
 namespace dsp {
     template <class T>
@@ -9,8 +10,6 @@ namespace dsp {
         HandlerSink() {}
 
         HandlerSink(stream<T>* in, void (*handler)(T* data, int count, void* ctx), void* ctx) { init(in, handler, ctx); }
-
-        ~HandlerSink() { generic_block<HandlerSink<T>>::stop(); }
 
         void init(stream<T>* in, void (*handler)(T* data, int count, void* ctx), void* ctx) {
             _in = in;
@@ -37,7 +36,7 @@ namespace dsp {
         }
 
         int run() {
-            count = _in->read();
+            int count = _in->read();
             if (count < 0) { return -1; }
             _handler(_in->readBuf, count, _ctx);
             _in->flush();
@@ -45,7 +44,6 @@ namespace dsp {
         }
 
     private:
-        int count;
         stream<T>* _in;
         void (*_handler)(T* data, int count, void* ctx);
         void* _ctx;
@@ -58,8 +56,6 @@ namespace dsp {
         RingBufferSink() {}
 
         RingBufferSink(stream<T>* in) { init(in); }
-
-        ~RingBufferSink() { generic_block<RingBufferSink<T>>::stop(); }
 
         void init(stream<T>* in) {
             _in = in;
@@ -77,7 +73,7 @@ namespace dsp {
         }
 
         int run() {
-            count = _in->read();
+            int count = _in->read();
             if (count < 0) { return -1; }
             if (data.write(_in->readBuf, count) < 0) { return -1; }
             _in->flush();
@@ -97,7 +93,6 @@ namespace dsp {
             data.clearWriteStop();
         }
 
-        int count;
         stream<T>* _in;
 
     };
@@ -108,8 +103,6 @@ namespace dsp {
         NullSink() {}
 
         NullSink(stream<T>* in) { init(in); }
-
-        ~NullSink() { generic_block<NullSink<T>>::stop(); }
 
         void init(stream<T>* in) {
             _in = in;
@@ -126,15 +119,63 @@ namespace dsp {
         }
 
         int run() {
-            count = _in->read();
+            int count = _in->read();
             if (count < 0) { return -1; }
             _in->flush();
             return count;
         }
 
     private:
-        int count;
         stream<T>* _in;
+
+    };
+
+    template <class T>
+    class FileSink : public generic_block<FileSink<T>> {
+    public:
+        FileSink() {}
+
+        FileSink(stream<T>* in, std::string path) { init(in, path); }
+
+        ~FileSink() {
+            generic_block<FileSink<T>>::stop();
+            if (file.is_open()) { file.close(); }
+        }
+
+        void init(stream<T>* in, std::string path) {
+            _in = in;
+            file = std::ofstream(path, std::ios::binary);
+            generic_block<FileSink<T>>::registerInput(_in);
+        }
+
+        void setInput(stream<T>* in) {
+            std::lock_guard<std::mutex> lck(generic_block<FileSink<T>>::ctrlMtx);
+            generic_block<FileSink<T>>::tempStop();
+            generic_block<FileSink<T>>::unregisterInput(_in);
+            _in = in;
+            generic_block<FileSink<T>>::registerInput(_in);
+            generic_block<FileSink<T>>::tempStart();
+        }
+
+        bool isOpen() {
+            return file.is_open();
+        }
+
+        int run() {
+            int count = _in->read();
+            if (count < 0) { return -1; }
+
+            if (file.is_open()) {
+                file.write((char*)_in->readBuf, count * sizeof(T));
+            }
+
+            _in->flush();
+            return count;
+        }
+
+    private:
+        stream<T>* _in;
+        std::ofstream file;
 
     };
 }

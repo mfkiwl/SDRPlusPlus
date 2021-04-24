@@ -48,14 +48,20 @@ void ConfigManager::save(bool lock) {
 void ConfigManager::enableAutoSave() {
     if (!autoSaveEnabled) {
         autoSaveEnabled = true;
+        termFlag = false;
         autoSaveThread = std::thread(autoSaveWorker, this);
     }
 }
 
 void ConfigManager::disableAutoSave() {
     if (autoSaveEnabled) {
-        autoSaveEnabled = false;
-        autoSaveThread.join();
+        {
+            std::lock_guard<std::mutex> lock(termMtx);
+            autoSaveEnabled = false;
+            termFlag = true;
+        }
+        termCond.notify_one();
+        if (autoSaveThread.joinable()) { autoSaveThread.join(); }
     }
 }
 
@@ -80,39 +86,11 @@ void ConfigManager::autoSaveWorker(ConfigManager* _this) {
             _this->save(false);
         }
         _this->mtx.unlock();
-        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+
+        // Sleep but listen for wakeup call
+        {
+            std::unique_lock<std::mutex> lock(_this->termMtx);
+            _this->termCond.wait_for(lock, std::chrono::milliseconds(1000), [_this]() { return _this->termFlag; } );
+        }
     }
 }
-
-// void ConfigManager::setResourceDir(std::string path) {
-//     if (!std::filesystem::exists(path)) {
-//         spdlog::error("Resource directory '{0}' does not exist", path);
-//         return;
-//     }
-//     if (!std::filesystem::is_regular_file(path)) {
-//         spdlog::error("Resource directory '{0}' is not a directory", path);
-//         return;
-//     }
-//     resDir = path;
-// }
-
-// std::string ConfigManager::getResourceDir() {
-//     return resDir;
-// }
-
-// void ConfigManager::setConfigDir(std::string path) {
-//     if (!std::filesystem::exists(path)) {
-//         spdlog::error("Resource directory '{0}' does not exist", path);
-//         return;
-//     }
-//     if (!std::filesystem::is_regular_file(path)) {
-//         spdlog::error("Resource directory '{0}' is not a directory", path);
-//         return;
-//     }
-//     resDir = path;
-// }
-
-// std::string ConfigManager::getConfigDir() {
-//     return configDir;
-// }
-

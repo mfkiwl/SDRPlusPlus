@@ -11,6 +11,7 @@
 #include <config.h>
 #include <imgui.h>
 
+
 class CWDemodulator : public Demodulator {
 public:
     CWDemodulator() {}
@@ -28,16 +29,19 @@ public:
         _config->aquire();
         if(_config->conf.contains(prefix)) {
             if(!_config->conf[prefix].contains("CW")) {
-                if (!_config->conf[prefix]["CW"].contains("bandwidth")) { _config->conf[prefix]["CW"]["bandwidth"] = bw; }
-                if (!_config->conf[prefix]["CW"].contains("snapInterval")) { _config->conf[prefix]["CW"]["snapInterval"] = snapInterval; }
+                _config->conf[prefix]["CW"]["bandwidth"] = bw;
+                _config->conf[prefix]["CW"]["snapInterval"] = snapInterval;
+                _config->conf[prefix]["CW"]["squelchLevel"] = squelchLevel;
             }
             json conf = _config->conf[prefix]["CW"];
-            bw = conf["bandwidth"];
-            snapInterval = conf["snapInterval"];
+            if (conf.contains("bandwidth")) { bw = conf["bandwidth"]; }
+            if (conf.contains("snapInterval")) { snapInterval = conf["snapInterval"]; }
+            if (conf.contains("squelchLevel")) { squelchLevel = conf["squelchLevel"]; }
         }
         else {
             _config->conf[prefix]["CW"]["bandwidth"] = bw;
             _config->conf[prefix]["CW"]["snapInterval"] = snapInterval;
+            _config->conf[prefix]["CW"]["squelchLevel"] = squelchLevel;
         }
         _config->release(true);
 
@@ -86,6 +90,7 @@ public:
         _vfo->setSampleRate(bbSampRate, bw);
         _vfo->setSnapInterval(snapInterval);
         _vfo->setReference(ImGui::WaterfallVFO::REF_CENTER);
+        _vfo->setBandwidthLimits(bwMin, bwMax, false);
     }
 
     void setVFO(VFOManager::VFO* vfo) {
@@ -126,18 +131,27 @@ public:
         float menuWidth = ImGui::GetContentRegionAvailWidth();
 
         ImGui::SetNextItemWidth(menuWidth);
-        if (ImGui::InputFloat(("##_radio_cw_bw_" + uiPrefix).c_str(), &bw, 1, 100, 0)) {
+        if (ImGui::InputFloat(("##_radio_cw_bw_" + uiPrefix).c_str(), &bw, 1, 100, "%.0f", 0)) {
             bw = std::clamp<float>(bw, bwMin, bwMax);
             setBandwidth(bw);
             _config->aquire();
             _config->conf[uiPrefix]["CW"]["bandwidth"] = bw;
             _config->release(true);
+        }if (running) {
+            if (_vfo->getBandwidthChanged()) {
+                bw = _vfo->getBandwidth();
+                setBandwidth(bw, false);
+                _config->aquire();
+                _config->conf[uiPrefix]["CW"]["bandwidth"] = bw;
+                _config->release(true);
+            }
         }
 
         ImGui::Text("Snap Interval");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-        if (ImGui::InputFloat(("##_radio_cw_snap_" + uiPrefix).c_str(), &snapInterval, 1, 100, 0)) {
+        if (ImGui::InputFloat(("##_radio_cw_snap_" + uiPrefix).c_str(), &snapInterval, 1, 100, "%.0f", 0)) {
+            if (snapInterval < 1) { snapInterval = 1; }
             setSnapInterval(snapInterval);
             _config->aquire();
             _config->conf[uiPrefix]["CW"]["snapInterval"] = snapInterval;
@@ -147,7 +161,7 @@ public:
         ImGui::Text("Squelch");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-        if (ImGui::SliderFloat(("##_radio_cw_deemp_" + uiPrefix).c_str(), &squelchLevel, -100.0f, 0.0f, "%.3fdB")) {
+        if (ImGui::SliderFloat(("##_radio_cw_squelch_" + uiPrefix).c_str(), &squelchLevel, -100.0f, 0.0f, "%.3fdB")) {
             squelch.setLevel(squelchLevel);
             _config->aquire();
             _config->conf[uiPrefix]["CW"]["squelchLevel"] = squelchLevel;
@@ -156,9 +170,9 @@ public:
     } 
 
 private:
-    void setBandwidth(float bandWidth) {
+    void setBandwidth(float bandWidth, bool updateWaterfall = true) {
         bw = bandWidth;
-        _vfo->setBandwidth(bw);
+        _vfo->setBandwidth(bw, updateWaterfall);
     }
 
     void setSnapInterval(float snapInt) {

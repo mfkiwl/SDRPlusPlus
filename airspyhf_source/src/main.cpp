@@ -8,6 +8,7 @@
 #include <config.h>
 #include <options.h>
 #include <libairspyhf/airspyhf.h>
+#include <gui/widgets/stepped_slider.h>
 
 #define CONCAT(a, b) ((std::string(a) + b).c_str())
 
@@ -108,15 +109,24 @@ public:
     }
 
     void selectBySerial(uint64_t serial) {
-        selectedSerial = serial;
         airspyhf_device_t* dev;
-        int err = airspyhf_open_sn(&dev, selectedSerial);
-        if (err != 0) {
+        try {
+            int err = airspyhf_open_sn(&dev, selectedSerial);
+            if (err != 0) {
+                char buf[1024];
+                sprintf(buf, "%016" PRIX64, selectedSerial);
+                spdlog::error("Could not open Airspy HF+ {0}", buf);
+                selectedSerial = 0;
+                return;
+            }
+        }
+        catch (std::exception e) {
             char buf[1024];
             sprintf(buf, "%016" PRIX64, selectedSerial);
             spdlog::error("Could not open Airspy HF+ {0}", buf);
-            return;
         }
+        
+        selectedSerial = serial;
 
         uint32_t sampleRates[256];
         airspyhf_get_samplerates(dev, sampleRates, 0);
@@ -225,7 +235,7 @@ private:
         if (_this->agcMode > 0) {
             airspyhf_set_hf_agc_threshold(_this->openDev, _this->agcMode - 1);
         }
-        airspyhf_set_hf_att(_this->openDev, _this->atten / 6);
+        airspyhf_set_hf_att(_this->openDev, _this->atten / 6.0f);
         airspyhf_set_hf_lna(_this->openDev, _this->hfLNA);
 
         airspyhf_start(_this->openDev, callback, _this);
@@ -328,10 +338,9 @@ private:
         ImGui::Text("Attenuation");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-        if (ImGui::SliderInt(CONCAT("##_airspyhf_attn_", _this->name), &_this->atten, 0, 48, "%d dB")) {
-            _this->atten = (_this->atten / 6) * 6;
+        if (ImGui::SliderFloatWithSteps(CONCAT("##_airspyhf_attn_", _this->name), &_this->atten, 0, 48, 6, "%.0f dB")) {
             if (_this->running) {
-                airspyhf_set_hf_att(_this->openDev, _this->atten / 6);
+                airspyhf_set_hf_att(_this->openDev, _this->atten / 6.0f);
             }
             if (_this->selectedSerStr != "") {
                 config.aquire();
@@ -361,7 +370,7 @@ private:
     int srId = 0;
     int agcMode = AGC_MODE_OFF;
     bool hfLNA = false;
-    int atten = 0;
+    float atten = 0.0f;
     std::string selectedSerStr = "";
 
     std::vector<uint64_t> devList;

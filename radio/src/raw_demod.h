@@ -8,6 +8,7 @@
 #include <config.h>
 #include <imgui.h>
 
+
 class RAWDemodulator : public Demodulator {
 public:
     RAWDemodulator() {}
@@ -24,14 +25,17 @@ public:
 
         _config->aquire();
         if(_config->conf.contains(prefix)) {
-            if(!_config->conf[prefix].contains("RAW")) {
-               if (!_config->conf[prefix]["RAW"].contains("snapInterval")) { _config->conf[prefix]["RAW"]["snapInterval"] = snapInterval; }
+            if(!_config->conf[prefix].contains("CW")) {
+                _config->conf[prefix]["CW"]["snapInterval"] = snapInterval;
+                _config->conf[prefix]["CW"]["squelchLevel"] = squelchLevel;
             }
-            json conf = _config->conf[prefix]["RAW"];
-            snapInterval = conf["snapInterval"];
+            json conf = _config->conf[prefix]["CW"];
+            if (conf.contains("snapInterval")) { snapInterval = conf["snapInterval"]; }
+            if (conf.contains("squelchLevel")) { squelchLevel = conf["squelchLevel"]; }
         }
         else {
-            _config->conf[prefix]["RAW"]["snapInterval"] = snapInterval;
+            _config->conf[prefix]["CW"]["snapInterval"] = snapInterval;
+            _config->conf[prefix]["CW"]["squelchLevel"] = squelchLevel;
         }
         _config->release(true);
 
@@ -60,6 +64,7 @@ public:
         _vfo->setSampleRate(audioSampRate, audioSampRate);
         _vfo->setSnapInterval(snapInterval);
         _vfo->setReference(ImGui::WaterfallVFO::REF_CENTER);
+        _vfo->setBandwidthLimits(0, 0, true);
     }
 
     void setVFO(VFOManager::VFO* vfo) {
@@ -92,7 +97,8 @@ public:
         ImGui::Text("Snap Interval");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-        if (ImGui::InputFloat(("##_radio_raw_snap_" + uiPrefix).c_str(), &snapInterval, 1, 100, 0)) {
+        if (ImGui::InputFloat(("##_radio_raw_snap_" + uiPrefix).c_str(), &snapInterval, 1, 100, "%.0f", 0)) {
+            if (snapInterval < 1) { snapInterval = 1; }
             setSnapInterval(snapInterval);
             _config->aquire();
             _config->conf[uiPrefix]["RAW"]["snapInterval"] = snapInterval;
@@ -102,7 +108,7 @@ public:
         ImGui::Text("Squelch");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-        if (ImGui::SliderFloat(("##_radio_raw_deemp_" + uiPrefix).c_str(), &squelchLevel, -100.0f, 0.0f, "%.3fdB")) {
+        if (ImGui::SliderFloat(("##_radio_raw_squelch_" + uiPrefix).c_str(), &squelchLevel, -100.0f, 0.0f, "%.3fdB")) {
             squelch.setLevel(squelchLevel);
             _config->aquire();
             _config->conf[uiPrefix]["RAW"]["squelchLevel"] = squelchLevel;

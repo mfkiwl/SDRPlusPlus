@@ -3,6 +3,7 @@
 #include <dsp/window.h>
 #include <numeric>
 #include <string.h>
+#include <dsp/math.h>
 
 namespace dsp {
     template <class T>
@@ -97,13 +98,12 @@ namespace dsp {
         }
 
         virtual int run() override {
-            count = _in->read();
+            int count = _in->read();
             if (count < 0) {
                 return -1;
             }
 
             int outCount = calcOutSize(count);
-
             memcpy(&buffer[tapsPerPhase], _in->readBuf, count * sizeof(T));
             _in->flush();
 
@@ -117,7 +117,7 @@ namespace dsp {
                     outIndex++;
                 }
             }
-            if constexpr (std::is_same_v<T, complex_t>) {
+            if constexpr (std::is_same_v<T, complex_t> || std::is_same_v<T, stereo_t>) {
                 for (int i = 0; outIndex < outCount; i += _decim) {
                     int phase = i % _interp;
                     volk_32fc_32f_dot_prod_32fc((lv_32fc_t*)&out.writeBuf[outIndex], (lv_32fc_t*)&buffer[(i / _interp)], tapPhases[phase], tapsPerPhase);
@@ -172,7 +172,6 @@ namespace dsp {
             tapPhases.clear();
         }
 
-        int count;
         stream<T>* _in;
 
         dsp::filter_window::generic_window* _window;
@@ -193,15 +192,22 @@ namespace dsp {
     public:
         PowerDecimator() {}
 
-        PowerDecimator(stream<complex_t>* in, unsigned int power) { init(in, power); }
+        PowerDecimator(stream<complex_t>* in, int power, int tapCount) { init(in, power, tapCount); }
 
-        ~PowerDecimator() {
-            generic_block<PowerDecimator>::stop();
-        }
-
-        void init(stream<complex_t>* in, unsigned int power) {
+        void init(stream<complex_t>* in, int power, int tapCount) {
             _in = in;
             _power = power;
+            _tapCount = tapCount;
+
+            // Allocate buffers
+            for (int i = 0; i < _power; i++) {
+                buffers[i] = new complex_t[STREAM_BUFFER_SIZE / (i+1)];
+                bufferStart[i] = &buffers[i][_tapCount - 1];
+            }
+
+            // Create taps
+            genHalfbandTaps();
+
             generic_block<PowerDecimator>::registerInput(_in);
             generic_block<PowerDecimator>::registerOutput(&out);
         }
@@ -218,38 +224,13 @@ namespace dsp {
         void setPower(unsigned int power) {
             std::lock_guard<std::mutex> lck(generic_block<PowerDecimator>::ctrlMtx);
             generic_block<PowerDecimator>::tempStop();
-            generic_block<PowerDecimator>::unregisterInput(_in);
             _power = power;
-            generic_block<PowerDecimator>::registerInput(_in);
             generic_block<PowerDecimator>::tempStart();
         }
 
         int run() {
-            count = _in->read();
+            int count = _in->read();
             if (count < 0) { return -1; }
-
-            if (_power == 0) {
-                memcpy(out.writeBuf, _in->readBuf, count * sizeof(complex_t));
-            }
-            else if (_power == 1) {
-                for (int j = 0; j < count; j += 2) {
-                    out.writeBuf[j / 2].i = (_in->readBuf[j].i + _in->readBuf[j + 1].i) * 0.5f;
-                    out.writeBuf[j / 2].q = (_in->readBuf[j].q + _in->readBuf[j + 1].q) * 0.5f;
-                }
-                count /= 2;
-            }
-
-            _in->flush();
-
-            if (_power > 1) {
-                for (int i = 1; i < _power; i++) {
-                    for (int j = 0; j < count; j += 2) {
-                        out.writeBuf[j / 2].i = (_in->readBuf[j].i + _in->readBuf[j + 1].i) * 0.5f;
-                        out.writeBuf[j / 2].q = (_in->readBuf[j].q + _in->readBuf[j + 1].q) * 0.5f;
-                    }
-                    count /= 2;
-                }
-            }
             
             if (!out.swap(count)) { return -1; }
             return count; 
@@ -257,11 +238,36 @@ namespace dsp {
 
         stream<complex_t> out;
 
-
     private:
-        int count;
-        unsigned int _power = 0;
+        void genHalfbandTaps() {
+            if (taps != NULL) { delete[] taps; }
+            taps = new float[_tapCount];
+
+            // Using Blackman-harris windows
+            int half = _tapCount / 2;
+            for (int i = 0; i < _tapCount; i++) {
+                taps[i] = sinc((FL_M_PI / 2.0f) * (i-half)) * blackmanHarrisWin(i, _tapCount - 1);
+                printf("%f\n", taps[i]);
+            }
+        }
+
+        inline float sinc(float x) {
+            return ((x == 0) ? 1.0f : (sinf(x)/x)) / FL_M_PI;
+        }
+
+        inline float blackmanHarrisWin(float n, float N) {
+            return 0.35875f - (0.48829f*cosf(2.0f*FL_M_PI*(n/N))) + (0.14128f*cosf(4.0f*FL_M_PI*(n/N))) - (0.01168f*cosf(6.0f*FL_M_PI*(n/N)));
+        }
+
+        int _power = 0;
+        int _tapCount = 31;
         stream<complex_t>* _in;
+
+        // Buffer lists, sets max decimation to 2^32
+        complex_t* buffers[32];
+        complex_t* bufferStart[32];
+
+        float* taps = NULL;
 
     };
 }

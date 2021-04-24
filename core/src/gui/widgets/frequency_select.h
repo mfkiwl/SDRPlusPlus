@@ -12,12 +12,14 @@ public:
 
     uint64_t frequency;
     bool frequencyChanged = false;
+    bool digitHovered = false;
 
 private:
     void onPosChange();
     void onResize();
     void incrementDigit(int i);
     void decrementDigit(int i);
+    void moveCursorToDigit(int i);
 
     ImVec2 widgetPos;
     ImVec2 widgetEndPos;

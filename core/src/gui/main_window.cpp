@@ -33,28 +33,8 @@
 #include <options.h>
 #include <gui/colormaps.h>
 
-// const int FFTSizes[] = {
-//     65536,
-//     32768,
-//     16384,
-//     8192,
-//     4096,
-//     2048
-// };
-
-// const char* FFTSizesStr[] = {
-//     "65536",
-//     "32768",
-//     "16384",
-//     "8192",
-//     "4096",
-//     "2048"
-// };
-
-// int fftSizeId = 0;
 int fftSize = 8192 * 8;
 
-std::thread worker;
 std::mutex fft_mtx;
 fftwf_complex *fft_in, *fft_out;
 fftwf_plan p;
@@ -62,31 +42,44 @@ float* tempFFT;
 float* FFTdata;
 char buf[1024];
 bool experimentalZoom = false;
-
-
+bool firstMenuRender = true;
+bool startedWithMenuClosed = false;
 
 void fftHandler(dsp::complex_t* samples, int count, void* ctx) {
+    std::lock_guard<std::mutex> lck(fft_mtx);
+    if (count != fftSize) { return; }
+
     memcpy(fft_in, samples, count * sizeof(dsp::complex_t));
     fftwf_execute(p);
     int half = count / 2;
 
-    volk_32fc_s32f_power_spectrum_32f(tempFFT, (lv_32fc_t*)fft_out, count, count);
-    volk_32f_s32f_multiply_32f(FFTdata, tempFFT, 0.5f, count);
+    // volk_32fc_s32f_power_spectrum_32f(FFTdata, (lv_32fc_t*)fft_out, count, count);
 
-    memcpy(tempFFT, &FFTdata[half], half * sizeof(float));
-    memmove(&FFTdata[half], FFTdata, half * sizeof(float));
-    memcpy(FFTdata, tempFFT, half * sizeof(float));
+    // memcpy(tempFFT, &FFTdata[half], half * sizeof(float));
+    // memmove(&FFTdata[half], FFTdata, half * sizeof(float));
+    // memcpy(FFTdata, tempFFT, half * sizeof(float));
+
+    // float* fftBuf = gui::waterfall.getFFTBuffer();
+    // if (fftBuf == NULL) {
+    //     gui::waterfall.pushFFT();
+    //     return;
+    // }
+
+    // memcpy(fftBuf, FFTdata, count * sizeof(float));
+
+    // gui::waterfall.pushFFT();
 
     float* fftBuf = gui::waterfall.getFFTBuffer();
     if (fftBuf == NULL) {
         gui::waterfall.pushFFT();
         return;
     }
-    float last = FFTdata[0];
-    for (int i = 0; i < count; i++) {
-        last = (FFTdata[i] * 0.1f) + (last * 0.9f);
-        fftBuf[i] = last;
-    }
+
+    volk_32fc_s32f_power_spectrum_32f(tempFFT, (lv_32fc_t*)fft_out, count, count);
+
+    memcpy(fftBuf, &tempFFT[half], half * sizeof(float));
+    memcpy(&fftBuf[half], tempFFT, half * sizeof(float));
+
     gui::waterfall.pushFFT();
 }
 
@@ -121,10 +114,23 @@ void windowInit() {
     credits::init();
 
     core::configManager.aquire();
-    gui::menu.order = core::configManager.conf["menuOrder"].get<std::vector<std::string>>();
+    json menuElements = core::configManager.conf["menuElements"];
     std::string modulesDir = core::configManager.conf["modulesDirectory"];
     std::string resourcesDir = core::configManager.conf["resourcesDirectory"];
     core::configManager.release();
+
+    // Load menu elements
+    gui::menu.order.clear();
+    for (auto& elem : menuElements) {
+        if (!elem.contains("name")) { spdlog::error("Menu element is missing name key"); continue; }
+        if (!elem["name"].is_string()) { spdlog::error("Menu element name isn't a string"); continue; }
+        if (!elem.contains("open")) { spdlog::error("Menu element is missing open key"); continue; }
+        if (!elem["open"].is_boolean()) { spdlog::error("Menu element name isn't a string"); continue; }
+        Menu::MenuOption_t opt;
+        opt.name = elem["name"];
+        opt.open = elem["open"];
+        gui::menu.order.push_back(opt);
+    }
 
     gui::menu.registerEntry("Source", sourecmenu::draw, NULL);
     gui::menu.registerEntry("Sinks", sinkmenu::draw, NULL);
@@ -232,6 +238,9 @@ void windowInit() {
 
     double frequency = core::configManager.conf["frequency"];
 
+    showMenu = core::configManager.conf["showMenu"];
+    startedWithMenuClosed = !showMenu;
+
     gui::freqSelect.setFrequency(frequency);
     gui::freqSelect.frequencyChanged = false;
     sigpath::sourceManager.tune(frequency);
@@ -248,6 +257,15 @@ void windowInit() {
     gui::waterfall.setFFTHeight(fftHeight);
 
     centerTuning = core::configManager.conf["centerTuning"];
+
+    // Load each VFO's offset
+    for (auto const& [name, _vfo] : gui::waterfall.vfos) {
+        if (!core::configManager.conf["vfoOffsets"].contains(name)) {
+            continue;
+        }
+        double offset = core::configManager.conf["vfoOffsets"][name];
+        sigpath::vfoManager.setOffset(name, std::clamp<double>(offset, -bw/2.0, bw/2.0));
+    }
 
     core::configManager.release();
 }
@@ -361,6 +379,7 @@ void drawWindow() {
         vfo = gui::waterfall.vfos[gui::waterfall.selectedVFO];
     }
 
+    // Handke VFO movement
     if (vfo != NULL) {
         if (vfo->centerOffsetChanged) {
             if (centerTuning) {
@@ -369,22 +388,21 @@ void drawWindow() {
             gui::freqSelect.setFrequency(gui::waterfall.getCenterFrequency() + vfo->generalOffset);
             gui::freqSelect.frequencyChanged = false;
             core::configManager.aquire();
-            core::configManager.conf["frequency"] = gui::freqSelect.frequency;
+            core::configManager.conf["vfoOffsets"][gui::waterfall.selectedVFO] = vfo->generalOffset;
             core::configManager.release(true);
         }
     }
     
     sigpath::vfoManager.updateFromWaterfall(&gui::waterfall);
 
+    // Handle selection of another VFO
     if (gui::waterfall.selectedVFOChanged && vfo != NULL) {
         gui::waterfall.selectedVFOChanged = false;
         gui::freqSelect.setFrequency(vfo->generalOffset + gui::waterfall.getCenterFrequency());
         gui::freqSelect.frequencyChanged = false;
-        core::configManager.aquire();
-        core::configManager.conf["frequency"] = gui::freqSelect.frequency;
-        core::configManager.release(true);
     }
 
+    // Handle change in selected frequency
     if (gui::freqSelect.frequencyChanged) {
         gui::freqSelect.frequencyChanged = false;
         setVFO(gui::freqSelect.frequency);
@@ -394,10 +412,14 @@ void drawWindow() {
             vfo->upperOffsetChanged = false;
         }
         core::configManager.aquire();
-        core::configManager.conf["frequency"] = gui::freqSelect.frequency;
+        core::configManager.conf["frequency"] = gui::waterfall.getCenterFrequency();
+        if (vfo != NULL) {
+            core::configManager.conf["vfoOffsets"][gui::waterfall.selectedVFO] = vfo->generalOffset;
+        }
         core::configManager.release(true);
     }
 
+    // Handle dragging the frequency scale
     if (gui::waterfall.centerFreqMoved) {
         gui::waterfall.centerFreqMoved = false;
         sigpath::sourceManager.tune(gui::waterfall.getCenterFrequency());
@@ -408,7 +430,7 @@ void drawWindow() {
             gui::freqSelect.setFrequency(gui::waterfall.getCenterFrequency());
         }
         core::configManager.aquire();
-        core::configManager.conf["frequency"] = gui::freqSelect.frequency;
+        core::configManager.conf["frequency"] = gui::waterfall.getCenterFrequency();
         core::configManager.release(true);
     }
 
@@ -428,8 +450,11 @@ void drawWindow() {
 
     // To Bar
     ImGui::PushID(ImGui::GetID("sdrpp_menu_btn"));
-    if (ImGui::ImageButton(icons::MENU, ImVec2(30, 30), ImVec2(0, 0), ImVec2(1, 1), 5)) {
+    if (ImGui::ImageButton(icons::MENU, ImVec2(30, 30), ImVec2(0, 0), ImVec2(1, 1), 5) || ImGui::IsKeyPressed(GLFW_KEY_MENU, false)) {
         showMenu = !showMenu;
+        core::configManager.aquire();
+        core::configManager.conf["showMenu"] = showMenu;
+        core::configManager.release(true);
     }
     ImGui::PopID();
 
@@ -437,7 +462,7 @@ void drawWindow() {
 
     if (playing) {
         ImGui::PushID(ImGui::GetID("sdrpp_stop_btn"));
-        if (ImGui::ImageButton(icons::STOP, ImVec2(30, 30), ImVec2(0, 0), ImVec2(1, 1), 5)) {
+        if (ImGui::ImageButton(icons::STOP, ImVec2(30, 30), ImVec2(0, 0), ImVec2(1, 1), 5) || ImGui::IsKeyPressed(GLFW_KEY_END, false)) {
             sigpath::sourceManager.stop();
             playing = false;
         }
@@ -445,7 +470,7 @@ void drawWindow() {
     }
     else { // TODO: Might need to check if there even is a device
         ImGui::PushID(ImGui::GetID("sdrpp_play_btn"));
-        if (ImGui::ImageButton(icons::PLAY, ImVec2(30, 30), ImVec2(0, 0), ImVec2(1, 1), 5)) {
+        if (ImGui::ImageButton(icons::PLAY, ImVec2(30, 30), ImVec2(0, 0), ImVec2(1, 1), 5) || ImGui::IsKeyPressed(GLFW_KEY_END, false)) {
             sigpath::sourceManager.start();
             // TODO: tune in module instead
             sigpath::sourceManager.tune(gui::waterfall.getCenterFrequency());
@@ -541,7 +566,22 @@ void drawWindow() {
         ImGui::BeginChild("Left Column");
         float menuColumnWidth = ImGui::GetContentRegionAvailWidth();
 
-        gui::menu.draw();
+        if (gui::menu.draw(firstMenuRender)) {
+            core::configManager.aquire();
+            json arr = json::array();
+            for (int i = 0; i < gui::menu.order.size(); i++) {
+                arr[i]["name"] = gui::menu.order[i].name;
+                arr[i]["open"] = gui::menu.order[i].open;
+            }
+            core::configManager.conf["menuElements"] = arr;
+            core::configManager.release(true);
+        }
+        if (startedWithMenuClosed) {
+            startedWithMenuClosed = false;  
+        }
+        else {
+            firstMenuRender = false;
+        }
 
         if(ImGui::CollapsingHeader("Debug")) {
             ImGui::Text("Frame time: %.3f ms/frame", 1000.0 / ImGui::GetIO().Framerate);
@@ -553,6 +593,17 @@ void drawWindow() {
             }
             ImGui::Checkbox("Show demo window", &demoWindow);
             ImGui::Checkbox("Experimental zoom", &experimentalZoom);
+            ImGui::Text("ImGui version: %s", ImGui::GetVersion());
+
+            if (ImGui::Button("Test Bug")) {
+                spdlog::error("Will this make the software crash?");
+            }
+
+            if (ImGui::Button("Testing something")) {
+                gui::menu.order[0].open = true;
+                firstMenuRender = true;
+            }
+
             ImGui::Spacing();
         }
 
@@ -577,6 +628,47 @@ void drawWindow() {
 
     ImGui::EndChild();
 
+    // Handle arrow keys
+    if (vfo != NULL && (gui::waterfall.mouseInFFT || gui::waterfall.mouseInWaterfall)) {
+        if (ImGui::IsKeyPressed(GLFW_KEY_LEFT) && !gui::freqSelect.digitHovered) {
+            double nfreq = gui::waterfall.getCenterFrequency() + vfo->generalOffset - vfo->snapInterval;
+            nfreq = roundl(nfreq / vfo->snapInterval) * vfo->snapInterval;
+            setVFO(nfreq);
+        }
+        if (ImGui::IsKeyPressed(GLFW_KEY_RIGHT) && !gui::freqSelect.digitHovered) {
+            double nfreq = gui::waterfall.getCenterFrequency() + vfo->generalOffset + vfo->snapInterval;
+            nfreq = roundl(nfreq / vfo->snapInterval) * vfo->snapInterval;
+            setVFO(nfreq);
+        }
+        core::configManager.aquire();
+        core::configManager.conf["frequency"] = gui::waterfall.getCenterFrequency();
+        if (vfo != NULL) {
+            core::configManager.conf["vfoOffsets"][gui::waterfall.selectedVFO] = vfo->generalOffset;
+        }
+        core::configManager.release(true);
+    }
+
+    // Handle scrollwheel
+    int wheel = ImGui::GetIO().MouseWheel;
+    if (wheel != 0 && (gui::waterfall.mouseInFFT || gui::waterfall.mouseInWaterfall)) {
+        double nfreq;
+        if (vfo != NULL) {
+            nfreq = gui::waterfall.getCenterFrequency() + vfo->generalOffset + (vfo->snapInterval * wheel);
+            nfreq = roundl(nfreq / vfo->snapInterval) * vfo->snapInterval;
+        }
+        else {
+            nfreq = gui::waterfall.getCenterFrequency() - (gui::waterfall.getViewBandwidth() * wheel / 20.0);
+        }
+        
+        setVFO(nfreq);
+        gui::freqSelect.setFrequency(nfreq);
+        core::configManager.aquire();
+        core::configManager.conf["frequency"] = gui::waterfall.getCenterFrequency();
+        if (vfo != NULL) {
+            core::configManager.conf["vfoOffsets"][gui::waterfall.selectedVFO] = vfo->generalOffset;
+        }
+        core::configManager.release(true);
+    }
     
     ImGui::NextColumn();
     ImGui::BeginChild("WaterfallControls");
@@ -584,7 +676,7 @@ void drawWindow() {
     ImGui::SetCursorPosX((ImGui::GetWindowSize().x / 2.0) - (ImGui::CalcTextSize("Zoom").x / 2.0));
     ImGui::Text("Zoom");
     ImGui::SetCursorPosX((ImGui::GetWindowSize().x / 2.0) - 10);
-    if (ImGui::VSliderFloat("##_7_", ImVec2(20.0, 150.0), &bw, gui::waterfall.getBandwidth(), 1000.0, "", (experimentalZoom ? 2.0 : 1.0))) {
+    if (ImGui::VSliderFloat("##_7_", ImVec2(20.0, 150.0), &bw, gui::waterfall.getBandwidth(), 1000.0, "")) {
         gui::waterfall.setViewBandwidth(bw);
         if (vfo != NULL) {
             gui::waterfall.setViewOffset(vfo->centerOffset); // center vfo on screen
@@ -596,7 +688,7 @@ void drawWindow() {
     ImGui::SetCursorPosX((ImGui::GetWindowSize().x / 2.0) - (ImGui::CalcTextSize("Max").x / 2.0));
     ImGui::Text("Max");
     ImGui::SetCursorPosX((ImGui::GetWindowSize().x / 2.0) - 10);
-    if (ImGui::VSliderFloat("##_8_", ImVec2(20.0, 150.0), &fftMax, 0.0, -100.0, "")) {
+    if (ImGui::VSliderFloat("##_8_", ImVec2(20.0, 150.0), &fftMax, 0.0, -160.0f, "")) {
         fftMax = std::max<float>(fftMax, fftMin + 10);
         core::configManager.aquire();
         core::configManager.conf["max"] = fftMax;
@@ -608,7 +700,7 @@ void drawWindow() {
     ImGui::SetCursorPosX((ImGui::GetWindowSize().x / 2.0) - (ImGui::CalcTextSize("Min").x / 2.0));
     ImGui::Text("Min");
     ImGui::SetCursorPosX((ImGui::GetWindowSize().x / 2.0) - 10);
-    if (ImGui::VSliderFloat("##_9_", ImVec2(20.0, 150.0), &fftMin, 0.0, -100.0, "")) {
+    if (ImGui::VSliderFloat("##_9_", ImVec2(20.0, 150.0), &fftMin, 0.0, -160.0f, "")) {
         fftMin = std::min<float>(fftMax - 10, fftMin);
         core::configManager.aquire();
         core::configManager.conf["min"] = fftMin;
@@ -639,4 +731,20 @@ void setViewBandwidthSlider(float bandwidth) {
 
 bool sdrIsRunning() {
     return playing;
+}
+
+void setFFTSize(int size) {
+    std::lock_guard<std::mutex> lck(fft_mtx);
+    fftSize = size;
+
+    gui::waterfall.setRawFFTSize(fftSize);
+    sigpath::signalPath.setFFTSize(fftSize);
+
+    fftwf_free(fft_in);
+    fftwf_free(fft_out);
+    fftwf_destroy_plan(p);
+    
+    fft_in = (fftwf_complex*)fftwf_malloc(sizeof(fftwf_complex) * fftSize);
+    fft_out = (fftwf_complex*)fftwf_malloc(sizeof(fftwf_complex) * fftSize);
+    p = fftwf_plan_dft_1d(fftSize, fft_in, fft_out, FFTW_FORWARD, FFTW_ESTIMATE);
 }

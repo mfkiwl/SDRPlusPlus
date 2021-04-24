@@ -3,9 +3,11 @@ project(airspy_source)
 
 if (MSVC)
     set(CMAKE_CXX_FLAGS "-O2 /std:c++17 /EHsc")
-else()
-    set(CMAKE_CXX_FLAGS "-O3 -std=c++17 -fpermissive")
-endif (MSVC)
+elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(CMAKE_CXX_FLAGS "-O3 -std=c++17 -Wno-unused-command-line-argument -undefined dynamic_lookup")
+else ()
+    set(CMAKE_CXX_FLAGS "-O3 -std=c++17")
+endif ()
 
 include_directories("src/")
 
@@ -23,9 +25,12 @@ if (MSVC)
 else (MSVC)
     find_package(PkgConfig)
 
-    pkg_check_modules(LIBAIRSPYHF REQUIRED libairspy)
+    pkg_check_modules(LIBAIRSPY REQUIRED libairspy)
 
-    target_include_directories(airspy_source PUBLIC ${LIBAIRSPYHF_INCLUDE_DIRS})
-    target_link_directories(airspy_source PUBLIC ${LIBAIRSPYHF_LIBRARY_DIRS})
-    target_link_libraries(airspy_source PUBLIC ${LIBAIRSPYHF_LIBRARIES})
-endif (MSVC)
+    target_include_directories(airspy_source PUBLIC ${LIBAIRSPY_INCLUDE_DIRS})
+    target_link_directories(airspy_source PUBLIC ${LIBAIRSPY_LIBRARY_DIRS})
+    target_link_libraries(airspy_source PUBLIC ${LIBAIRSPY_LIBRARIES})
+endif ()
+
+# Install directives
+install(TARGETS airspy_source DESTINATION lib/sdrpp/plugins)

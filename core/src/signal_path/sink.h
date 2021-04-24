@@ -25,9 +25,9 @@ public:
     class Stream {
     public:
         Stream() {}
-        Stream(dsp::stream<dsp::stereo_t>* in, const Event<float>::EventHandler& srChangeHandler, float sampleRate);
+        Stream(dsp::stream<dsp::stereo_t>* in, const EventHandler<float>& srChangeHandler, float sampleRate);
 
-        void init(dsp::stream<dsp::stereo_t>* in, const Event<float>::EventHandler& srChangeHandler, float sampleRate);
+        void init(dsp::stream<dsp::stereo_t>* in, const EventHandler<float>& srChangeHandler, float sampleRate);
 
         void start();
         void stop();
@@ -79,7 +79,7 @@ public:
         void menuHandler() {}
 
         static SinkManager::Sink* create(SinkManager::Stream* stream, std::string streamName, void* ctx) {
-            stream->srChange.emit(48000);
+            stream->setSampleRate(48000);
             return new SinkManager::NullSink(stream);
         }
 

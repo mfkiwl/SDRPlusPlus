@@ -8,6 +8,7 @@
 #include <config.h>
 #include <imgui.h>
 
+
 class FMDemodulator : public Demodulator {
 public:
     FMDemodulator() {}
@@ -25,37 +26,37 @@ public:
         _config->aquire();
         if(_config->conf.contains(prefix)) {
             if(!_config->conf[prefix].contains("FM")) {
-                if (!_config->conf[prefix]["FM"].contains("bandwidth")) { _config->conf[prefix]["FM"]["bandwidth"] = bw; }
-                if (!_config->conf[prefix]["FM"].contains("snapInterval")) { _config->conf[prefix]["FM"]["snapInterval"] = snapInterval; }
+                _config->conf[prefix]["FM"]["bandwidth"] = bw;
+                _config->conf[prefix]["FM"]["snapInterval"] = snapInterval;
+                _config->conf[prefix]["FM"]["squelchLevel"] = squelchLevel;
             }
             json conf = _config->conf[prefix]["FM"];
-            bw = conf["bandwidth"];
-            snapInterval = conf["snapInterval"];
+            if (conf.contains("bandwidth")) { bw = conf["bandwidth"]; }
+            if (conf.contains("snapInterval")) { snapInterval = conf["snapInterval"]; }
+            if (conf.contains("squelchLevel")) { squelchLevel = conf["squelchLevel"]; }
         }
         else {
             _config->conf[prefix]["FM"]["bandwidth"] = bw;
             _config->conf[prefix]["FM"]["snapInterval"] = snapInterval;
+            _config->conf[prefix]["FM"]["squelchLevel"] = squelchLevel;
         }
         _config->release(true);
 
         squelch.init(_vfo->output, squelchLevel);
         
-        demod.init(&squelch.out, bbSampRate, bandWidth / 2.0f);
+        demod.init(&squelch.out, bbSampRate, bw / 2.0f);
 
         float audioBW = std::min<float>(audioSampleRate / 2.0f, bw / 2.0f);
         win.init(audioBW, audioBW, bbSampRate);
         resamp.init(&demod.out, &win, bbSampRate, audioSampRate);
         win.setSampleRate(bbSampRate * resamp.getInterpolation());
         resamp.updateWindow(&win);
-
-        m2s.init(&resamp.out);
     }
 
     void start() {
         squelch.start();
         demod.start();
         resamp.start();
-        m2s.start();
         running = true;
     }
 
@@ -63,7 +64,6 @@ public:
         squelch.stop();
         demod.stop();
         resamp.stop();
-        m2s.stop();
         running = false;
     }
     
@@ -75,6 +75,7 @@ public:
         _vfo->setSampleRate(bbSampRate, bw);
         _vfo->setSnapInterval(snapInterval);
         _vfo->setReference(ImGui::WaterfallVFO::REF_CENTER);
+        _vfo->setBandwidthLimits(bwMin, bwMax, false);
     }
 
     void setVFO(VFOManager::VFO* vfo) {
@@ -91,7 +92,7 @@ public:
             resamp.stop();
         }
         audioSampRate = sampleRate;
-        float audioBW = std::min<float>(audioSampRate / 2.0f, 16000.0f);
+        float audioBW = std::min<float>(audioSampRate / 2.0f, bw / 2.0f);
         resamp.setOutSampleRate(audioSampRate);
         win.setSampleRate(bbSampRate * resamp.getInterpolation());
         win.setCutoff(audioBW);
@@ -107,25 +108,35 @@ public:
     }
 
     dsp::stream<dsp::stereo_t>* getOutput() {
-        return &m2s.out;
+        return &resamp.out;
     }
     
     void showMenu() {
         float menuWidth = ImGui::GetContentRegionAvailWidth();
 
         ImGui::SetNextItemWidth(menuWidth);
-        if (ImGui::InputFloat(("##_radio_fm_bw_" + uiPrefix).c_str(), &bw, 1, 100, 0)) {
+        if (ImGui::InputFloat(("##_radio_fm_bw_" + uiPrefix).c_str(), &bw, 1, 100, "%.0f", 0)) {
             bw = std::clamp<float>(bw, bwMin, bwMax);
             setBandwidth(bw);
             _config->aquire();
             _config->conf[uiPrefix]["FM"]["bandwidth"] = bw;
             _config->release(true);
         }
+        if (running) {
+            if (_vfo->getBandwidthChanged()) {
+                bw = _vfo->getBandwidth();
+                setBandwidth(bw, false);
+                _config->aquire();
+                _config->conf[uiPrefix]["FM"]["bandwidth"] = bw;
+                _config->release(true);
+            }
+        }
         
         ImGui::Text("Snap Interval");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-        if (ImGui::InputFloat(("##_radio_fm_snap_" + uiPrefix).c_str(), &snapInterval, 1, 100, 0)) {
+        if (ImGui::InputFloat(("##_radio_fm_snap_" + uiPrefix).c_str(), &snapInterval, 1, 100, "%.0f", 0)) {
+            if (snapInterval < 1) { snapInterval = 1; }
             setSnapInterval(snapInterval);
             _config->aquire();
             _config->conf[uiPrefix]["FM"]["snapInterval"] = snapInterval;
@@ -135,7 +146,7 @@ public:
         ImGui::Text("Squelch");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(menuWidth - ImGui::GetCursorPosX());
-        if (ImGui::SliderFloat(("##_radio_fm_deemp_" + uiPrefix).c_str(), &squelchLevel, -100.0f, 0.0f, "%.3fdB")) {
+        if (ImGui::SliderFloat(("##_radio_fm_squelch_" + uiPrefix).c_str(), &squelchLevel, -100.0f, 0.0f, "%.3fdB")) {
             squelch.setLevel(squelchLevel);
             _config->aquire();
             _config->conf[uiPrefix]["FM"]["squelchLevel"] = squelchLevel;
@@ -144,10 +155,11 @@ public:
     } 
 
 private:
-    void setBandwidth(float bandWidth) {
+    void setBandwidth(float bandWidth, bool updateWaterfall = true) {
         bw = bandWidth;
-        _vfo->setBandwidth(bw);
+        _vfo->setBandwidth(bw, updateWaterfall);
         demod.setDeviation(bw / 2.0f);
+        setAudioSampleRate(audioSampRate);
     }
 
     void setSnapInterval(float snapInt) {
@@ -155,14 +167,14 @@ private:
         _vfo->setSnapInterval(snapInterval);
     }
 
-    const float bwMax = 15000;
+    const float bwMax = 50000;
     const float bwMin = 6000;
-    const float bbSampRate = 12500;
+    const float bbSampRate = 50000;
 
     std::string uiPrefix;
     float snapInterval = 10000;
     float audioSampRate = 48000;
-    float bw = 12500;
+    float bw = 50000;
     bool running = false;
     float squelchLevel = -100.0f;
 
@@ -170,8 +182,7 @@ private:
     dsp::Squelch squelch;
     dsp::FMDemod demod;
     dsp::filter_window::BlackmanWindow win;
-    dsp::PolyphaseResampler<float> resamp;
-    dsp::MonoToStereo m2s;
+    dsp::PolyphaseResampler<dsp::stereo_t> resamp;
 
     ConfigManager* _config;
 

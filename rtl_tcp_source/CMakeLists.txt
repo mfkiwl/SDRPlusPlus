@@ -3,9 +3,11 @@ project(rtl_tcp_source)
 
 if (MSVC)
     set(CMAKE_CXX_FLAGS "-O2 /std:c++17 /EHsc")
-else()
-    set(CMAKE_CXX_FLAGS "-O3 -std=c++17 -fpermissive")
-endif (MSVC)
+elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(CMAKE_CXX_FLAGS "-O3 -std=c++17 -Wno-unused-command-line-argument -undefined dynamic_lookup")
+else ()
+    set(CMAKE_CXX_FLAGS "-O3 -std=c++17")
+endif ()
 
 include_directories("src/")
 
@@ -18,3 +20,6 @@ set_target_properties(rtl_tcp_source PROPERTIES PREFIX "")
 if(WIN32)
   target_link_libraries(rtl_tcp_source PRIVATE wsock32 ws2_32)
 endif()
+
+# Install directives
+install(TARGETS rtl_tcp_source DESTINATION lib/sdrpp/plugins)

@@ -1,5 +1,6 @@
 #pragma once
 #include <dsp/block.h>
+#include <dsp/math.h>
 
 namespace dsp {
     class SineSource : public generic_block<SineSource> {
@@ -7,8 +8,6 @@ namespace dsp {
         SineSource() {}
 
         SineSource(int blockSize, float sampleRate, float freq) { init(blockSize, sampleRate, freq); }
-
-        ~SineSource() { generic_block<SineSource>::stop(); }
 
         void init(int blockSize, float sampleRate, float freq) {
             _blockSize = blockSize;
@@ -69,6 +68,42 @@ namespace dsp {
         lv_32fc_t phaseDelta;
         lv_32fc_t phase;
         lv_32fc_t* zeroPhase;
+
+    };
+
+    template <class T>
+    class HandlerSource : public generic_block<HandlerSource<T>> {
+    public:
+        HandlerSource() {}
+
+        HandlerSource(int (*handler)(T* data, void* ctx), void* ctx) { init(handler, ctx); }
+
+        void init(int (*handler)(T* data, void* ctx), void* ctx) {
+            _handler = handler;
+            _ctx = ctx;
+            generic_block<HandlerSource<T>>::registerOutput(&out);
+        }
+
+        void setHandler(int (*handler)(T* data, void* ctx), void* ctx) {
+            std::lock_guard<std::mutex> lck(generic_block<HandlerSource<T>>::ctrlMtx);
+            generic_block<HandlerSource<T>>::tempStop();
+            _handler = handler;
+            _ctx = ctx;
+            generic_block<HandlerSource<T>>::tempStart();
+        }
+
+        int run() {
+            int count = _handler(out.writeBuf, _ctx);
+            if (count < 0) { return -1; }
+            out.swap(count);
+            return count;
+        }
+
+        stream<T> out;
+
+    private:
+        int (*_handler)(T* data, void* ctx);
+        void* _ctx;
 
     };
 }

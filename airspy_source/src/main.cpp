@@ -9,6 +9,7 @@
 #include <options.h>
 #include <libairspy/airspy.h>
 
+
 #define CONCAT(a, b) ((std::string(a) + b).c_str())
 
 SDRPP_MOD_INFO {
@@ -25,6 +26,8 @@ class AirspySourceModule : public ModuleManager::Instance {
 public:
     AirspySourceModule(std::string name) {
         this->name = name;
+
+        airspy_init();
 
         sampleRate = 10000000.0;
 
@@ -53,7 +56,7 @@ public:
     }
 
     ~AirspySourceModule() {
-        
+        airspy_exit();
     }
 
     void enable() {
@@ -104,15 +107,23 @@ public:
     }
 
     void selectBySerial(uint64_t serial) {
-        selectedSerial = serial;
         airspy_device* dev;
-        int err = airspy_open_sn(&dev, selectedSerial);
-        if (err != 0) {
-            char buf[1024];
-            sprintf(buf, "%016" PRIX64, selectedSerial);
-            spdlog::error("Could not open Airspy HF+ {0}", buf);
-            return;
+        try {
+            int err = airspy_open_sn(&dev, serial);
+            if (err != 0) {
+                char buf[1024];
+                sprintf(buf, "%016" PRIX64, serial);
+                spdlog::error("Could not open Airspy {0}", buf);
+                selectedSerial = 0;
+                return;
+            }
         }
+        catch (std::exception e) {
+            char buf[1024];
+            sprintf(buf, "%016" PRIX64, serial);
+            spdlog::error("Could not open Airspy {0}", buf);
+        }
+        selectedSerial = serial;
 
         uint32_t sampleRates[256];
         airspy_get_samplerates(dev, sampleRates, 0);
@@ -229,7 +240,7 @@ private:
             return;
         }
         if (_this->selectedSerial == 0) {
-            spdlog::error("Tried to start AirspyHF+ source with null serial");
+            spdlog::error("Tried to start Airspy source with null serial");
             return;
         }
 

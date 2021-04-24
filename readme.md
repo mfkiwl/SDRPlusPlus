@@ -1,6 +1,6 @@
 # SDR++, The bloat-free SDR software
 
-![Screenshot](https://i.imgur.com/WejsiFN.png)
+![Screenshot](https://i.imgur.com/EFOqwQQ.png)
 SDR++ is a cross-platform and open source SDR software with the aim of being bloat free and simple to use.
 
 ![Linux Build](https://github.com/AlexandreRouma/SDRPlusPlus/workflows/Linux%20Build/badge.svg)
@@ -16,13 +16,12 @@ SDR++ is a cross-platform and open source SDR software with the aim of being blo
 * Cross-platform (Windows, Linux, OSX and BSD)
 * Full waterfall update when possible. Makes browsing signals easier and more pleasant
 
-## Comming soon
+## Coming soon
 
 * Digital demodulators and decoders
 * Light theme (I know you weirdos exist lol)
 * Waterfall color scheme editor
-* Switchable fft size
-* other small customisation options
+* Other small customisation options
 
 # Installing
 ## Windows
@@ -31,31 +30,39 @@ Download the latest release from [the Releases page](https://github.com/Alexandr
 To create a desktop short, rightclick the exe and select `Send to -> Desktop (create shortcut)`, then, rename the shortcut on the desktop to whatever you want.
 
 ## Linux
+
+### Debian-based (Ubuntu, Mint, etc)
 Download the latest release from [the Releases page](https://github.com/AlexandreRouma/SDRPlusPlus/releases) and extract to the directory of your choice.
 
 Then, run:
 ```sh
-sudo apt install libfftw3-dev libglfw3-dev libglew-dev libvolk2-dev libsoapysdr-dev libairspyhf-dev libiio-dev libad9361-dev portaudio19-dev libhackrf-dev
+sudo apt install libfftw3-dev libglfw3-dev libglew-dev libvolk2-dev libsoapysdr-dev libairspyhf-dev libiio-dev libad9361-dev librtaudio-dev libhackrf-dev
 sudo dpkg -i sdrpp_debian_amd64.deb
 ```
 
 If `libvolk2-dev` is not available, use `libvolk1-dev`.
 
+### Arch-based
+Install the latest release from the [sdrpp-git](https://aur.archlinux.org/packages/sdrpp-git/) AUR package
+
+### Other
+There are currently no existing packages for other distributions, for these systems you'll have to [build from source](https://github.com/AlexandreRouma/SDRPlusPlus#building-on-linux--bsd).
+
 ## MacOS
 TODO
 
 ## BSD
-TODO
+There are currently no BSD packages, refer to [Building on Linux / BSD](https://github.com/AlexandreRouma/SDRPlusPlus#building-on-linux--bsd) for instructions on building from source.
 
 # Building on Windows
 ## Install dependencies
 * cmake
 * vcpkg
-* PothosSDR (This will install libraires for most SDRs)
+* PothosSDR (This will install libraries for most SDRs)
+* rtaudio
 
-After this, install the following depencies using vcpkg:
+After this, install the following dependencies using vcpkg:
 * fftw3
-* portaudio
 * glfw
 * glew
 
@@ -143,7 +150,7 @@ Next install dependencies based on the modules you wish to build:
 * soapy_source: SoapySDR + drivers for each SDRs (see SoapySDR docs)
 * airspyhf_source: libairspyhf
 * plutosdr_source: libiio, libad9361
-* audio_sink: portaudio
+* audio_sink: librtaudio-dev
 
 Note: make sure you're using GCC 8 or later as older versions do not have `std::filesystem` built-in.
 
@@ -169,7 +176,7 @@ First run SDR++ from the build directory to generate a default config file
 ./sdrpp -r ../root_dev/
 ```
 
-Then, you need to edit the `root_dev/config` file to point to the modules that were built. Here us a sample if what it would look like:
+Then, you need to edit the `root_dev/config.json` file to point to the modules that were built. Here is a sample of what it should look like:
 
 ```json
 ...
@@ -183,6 +190,8 @@ Then, you need to edit the `root_dev/config` file to point to the modules that w
 ...
 ```
 
+Note: You can generate this list automatically by running `find . | grep '\.so' | sed 's/^/"/' | sed 's/$/",/' | sed '/sdrpp_core.so/d'` in the build directory.
+
 You also need to change the location of the resource and module directories, for development, I recommend:
 ```json
 ...
@@ -194,7 +203,7 @@ You also need to change the location of the resource and module directories, for
 
 Remember that these paths will be relative to the run directory.
 
-Off cours, remember to add entries for all modules that were built and that you wish to use.
+Of course, remember to add entries for all modules that were built and that you wish to use.
 
 Next, from the top directory, you can simply run:
 ```
@@ -207,7 +216,10 @@ Or, if you wish to run from the build directory, you need to correct directories
 ```
 
 ## Installing SDR++
-Coming soon!
+To install SDR++, run the following command in your ``build`` folder:
+```sh
+sudo make install
+```
 
 # Contributing
 
@@ -217,24 +229,33 @@ I will soon publish a contributing.md listing the code style to use.
 # Credits
 
 ## Patrons
-* [SignalsEverywhere](https://signalseverywhere.com/)
+
+* [Croccydile](https://example.com/)
+* [Daniele D'Agnelli](https://linkedin.com/in/dagnelli)
+* [W4IPA](https://twitter.com/W4IPAstroke5)
 * [Lee Donaghy](https://github.com/github)
+* [Passion-Radio.com](https://passion-radio.com/)
+* [Scanner School](https://scannerschool.com/)
+* [SignalsEverywhere](https://signalseverywhere.com/)
+
 
 ## Contributors
-* [aosync](https://github.com/aosync)
+* [Aang23](https://github.com/Aang23)
 * [Alexsey Shestacov](https://github.com/wingrime)
+* [Aosync](https://github.com/aosync)
 * [Benjamin Kyd](https://github.com/benkyd)
-* [cropinghigh](https://github.com/cropinghigh)
+* [Cropinghigh](https://github.com/cropinghigh)
 * [Howard0su](https://github.com/howard0su)
 * [Martin Hauke](https://github.com/mnhauke)
+* [Paulo Matias](https://github.com/thotypous)
 * [Raov](https://twitter.com/raov_birbtog)
 * [Szymon Zakrent](https://github.com/zakrent)
 * [Tobias Mädel](https://github.com/Manawyrm)
 
 
-## Libaries used
+## Libraries used
 * [SoapySDR (PothosWare)](https://github.com/pothosware/SoapySDR)
 * [Dear ImGui (ocornut)](https://github.com/ocornut/imgui)
 * [spdlog (gabime)](https://github.com/gabime/spdlog)
 * [json (nlohmann)](https://github.com/nlohmann/json)
-* [portaudio (PortAudio community)](http://www.portaudio.com/)
+* [rtaudio](http://www.portaudio.com/)
